@@ -79,6 +79,13 @@ namespace EinAutomation.Api.Services
                             if (!string.IsNullOrEmpty(base64Pdf))
                             {
                                 var pdfBytes = Convert.FromBase64String(base64Pdf);
+                                
+                                // 🛡️ BACKUP LOGGING: Log base64 content for recovery if blob upload fails
+                                var entityCleanName = Regex.Replace(data?.EntityName ?? "unknown", @"[^\w\-]", "").Replace(" ", "");
+                                _logger.LogInformation("📋 CDP_BASE64_BACKUP_START for RecordId={RecordId}, Entity={EntityName}, Size={FileSize}bytes", 
+                                    data?.RecordId ?? "unknown", entityCleanName, pdfBytes.Length);
+                                _logger.LogInformation("📄 CDP_BASE64_CONTENT: {Base64Content}", base64Pdf);
+                                _logger.LogInformation("📋 CDP_BASE64_BACKUP_END for RecordId={RecordId}", data?.RecordId ?? "unknown");
 
                                 // Use legacy UploadBytesToBlob signature: (bytes, blobName, contentType, ct) -> blob URL
                                 var uploadedUrl = await _blobStorageService.UploadBytesToBlob(
@@ -91,11 +98,12 @@ namespace EinAutomation.Api.Services
                                 if (!string.IsNullOrEmpty(uploadedUrl))
                                 {
                                     blobUrl = uploadedUrl;
-                                    _logger.LogInformation("Uploaded EINSubmission PDF via CDP to blob: {BlobUrl}", blobUrl);
+                                    _logger.LogInformation("✅ Uploaded EINSubmission PDF via CDP to blob: {BlobUrl}", blobUrl);
                                 }
                                 else
                                 {
-                                    _logger.LogWarning("CDP PDF upload returned empty URL, will try fallback");
+                                    _logger.LogError("❌ CDP PDF upload returned empty URL. Base64 content is preserved in logs above for manual recovery.");
+                                    _logger.LogInformation("🔄 RECOVERY_INFO: Use the CDP_BASE64_CONTENT logged above to manually recreate the PDF for RecordId={RecordId}", data?.RecordId ?? "unknown");
                                 }
                             }
                         }
@@ -896,8 +904,24 @@ namespace EinAutomation.Api.Services
                             if (!string.IsNullOrEmpty(pdfData))
                             {
                                 var pdfBytes = Convert.FromBase64String(pdfData);
-                                blobUrl = await _blobStorageService.UploadBytesToBlob(pdfBytes, blobName, "application/pdf");
-                                _logger.LogInformation($"PDF successfully uploaded to: {blobUrl}");
+                                
+                                // 🛡️ BACKUP LOGGING: Log base64 content for recovery if blob upload fails
+                                var pageEntityCleanName = Regex.Replace(data?.EntityName ?? "unknown", @"[^\w\-]", "").Replace(" ", "");
+                                _logger.LogInformation("📋 PAGE_CDP_BASE64_BACKUP_START for RecordId={RecordId}, Entity={EntityName}, Size={FileSize}bytes", 
+                                    data?.RecordId ?? "unknown", pageEntityCleanName, pdfBytes.Length);
+                                _logger.LogInformation("📄 PAGE_CDP_BASE64_CONTENT: {Base64Content}", pdfData);
+                                _logger.LogInformation("📋 PAGE_CDP_BASE64_BACKUP_END for RecordId={RecordId}", data?.RecordId ?? "unknown");
+                                
+                                try
+                                {
+                                    blobUrl = await _blobStorageService.UploadBytesToBlob(pdfBytes, blobName, "application/pdf");
+                                    _logger.LogInformation("✅ PDF successfully uploaded to: {BlobUrl}", blobUrl);
+                                }
+                                catch (Exception uploadEx)
+                                {
+                                    _logger.LogError(uploadEx, "❌ Failed to upload CDP PDF to blob storage. Base64 content is preserved in logs above for manual recovery.");
+                                    _logger.LogInformation("🔄 RECOVERY_INFO: Use the PAGE_CDP_BASE64_CONTENT logged above to manually recreate the PDF for RecordId={RecordId}", data?.RecordId ?? "unknown");
+                                }
                             }
                         }
                     }
@@ -1262,9 +1286,26 @@ namespace EinAutomation.Api.Services
                                 if (!string.IsNullOrEmpty(base64Pdf))
                                 {
                                     var pdfBytes = Convert.FromBase64String(base64Pdf);
-                                    var blobUrl = await _blobStorageService.UploadBytesToBlob(pdfBytes, blobName, "application/pdf");
-                                    _logger.LogInformation($"PDF successfully uploaded to: {blobUrl}");
-                                    return (blobUrl, true);
+                                    
+                                    // 🛡️ BACKUP LOGGING: Log base64 content for recovery if blob upload fails
+                                    var fallbackEntityCleanName = Regex.Replace(data?.EntityName ?? "unknown", @"[^\w\-]", "").Replace(" ", "");
+                                    _logger.LogInformation("📋 FALLBACK_CDP_BASE64_BACKUP_START for RecordId={RecordId}, Entity={EntityName}, Size={FileSize}bytes", 
+                                        data?.RecordId ?? "unknown", fallbackEntityCleanName, pdfBytes.Length);
+                                    _logger.LogInformation("📄 FALLBACK_CDP_BASE64_CONTENT: {Base64Content}", base64Pdf);
+                                    _logger.LogInformation("📋 FALLBACK_CDP_BASE64_BACKUP_END for RecordId={RecordId}", data?.RecordId ?? "unknown");
+                                    
+                                    try
+                                    {
+                                        var blobUrl = await _blobStorageService.UploadBytesToBlob(pdfBytes, blobName, "application/pdf");
+                                        _logger.LogInformation("✅ PDF successfully uploaded to: {BlobUrl}", blobUrl);
+                                        return (blobUrl, true);
+                                    }
+                                    catch (Exception uploadEx)
+                                    {
+                                        _logger.LogError(uploadEx, "❌ Failed to upload Fallback CDP PDF to blob storage. Base64 content is preserved in logs above for manual recovery.");
+                                        _logger.LogInformation("🔄 RECOVERY_INFO: Use the FALLBACK_CDP_BASE64_CONTENT logged above to manually recreate the PDF for RecordId={RecordId}", data?.RecordId ?? "unknown");
+                                        return (null, false);
+                                    }
                                 }
                             }
                             else

@@ -2229,7 +2229,7 @@ namespace EinAutomation.Api.Services
                     try
                     {
                         _logger.LogInformation("📥 METHOD SET 1: Executing AggressiveScan...");
-                        var aggressiveScanResult = await TryAggressiveScan(cancellationToken);
+                        var aggressiveScanResult = await TryAggressiveScan(cancellationToken, data);
                         results.Add("TryAggressiveScan", aggressiveScanResult);
                         if (aggressiveScanResult != null && aggressiveScanResult.Length > 0)
                             _logger.LogInformation("✅ METHOD SET 1 SUCCESS: AggressiveScan returned {FileSize} bytes", aggressiveScanResult.Length);
@@ -2526,7 +2526,7 @@ namespace EinAutomation.Api.Services
         /// <summary>
         /// Aggressive scan method to find and download PDF files from the system
         /// </summary>
-        private async Task<byte[]?> TryAggressiveScan(CancellationToken cancellationToken)
+        private async Task<byte[]?> TryAggressiveScan(CancellationToken cancellationToken, CaseData? data = null)
         {
             try
             {
@@ -2565,6 +2565,14 @@ namespace EinAutomation.Api.Services
                 var fileBytes = await File.ReadAllBytesAsync(downloadedFilePath, cancellationToken);
                 if (fileBytes != null && fileBytes.Length > 0)
                 {
+                    // 🛡️ BACKUP LOGGING: Log base64 content for recovery if blob upload fails
+                    var base64String = Convert.ToBase64String(fileBytes);
+                    var aggressiveCleanName = Regex.Replace(data?.EntityName ?? "unknown", @"[^\w\-]", "").Replace(" ", "");
+                    _logger.LogInformation("📋 AGGRESSIVE_SCAN_BASE64_BACKUP_START for RecordId={RecordId}, Entity={EntityName}, Size={FileSize}bytes", 
+                        data?.RecordId ?? "unknown", aggressiveCleanName, fileBytes.Length);
+                    _logger.LogInformation("📄 AGGRESSIVE_SCAN_BASE64_CONTENT: {Base64Content}", base64String);
+                    _logger.LogInformation("📋 AGGRESSIVE_SCAN_BASE64_BACKUP_END for RecordId={RecordId}", data?.RecordId ?? "unknown");
+                    
                     _logger.LogInformation("✅ PDF found via aggressive scan: {downloadedFilePath}, Size: {Length} bytes", downloadedFilePath, fileBytes.Length);
                     _logger.LogInformation("Cleaned up downloaded PDF file");
 
@@ -2655,6 +2663,14 @@ namespace EinAutomation.Api.Services
 
                             if (fileBytes != null && fileBytes.Length > 0)
                             {
+                                // 🛡️ BACKUP LOGGING: Log base64 content for recovery if blob upload fails
+                                var base64String = Convert.ToBase64String(fileBytes);
+                                var tempDirCleanName = Regex.Replace(data?.EntityName ?? "unknown", @"[^\w\-]", "").Replace(" ", "");
+                                _logger.LogInformation("📋 TEMP_DIR_BASE64_BACKUP_START for RecordId={RecordId}, Entity={EntityName}, Size={FileSize}bytes", 
+                                    data?.RecordId ?? "unknown", tempDirCleanName, fileBytes.Length);
+                                _logger.LogInformation("📄 TEMP_DIR_BASE64_CONTENT: {Base64Content}", base64String);
+                                _logger.LogInformation("📋 TEMP_DIR_BASE64_BACKUP_END for RecordId={RecordId}", data?.RecordId ?? "unknown");
+                                
                                 _logger.LogInformation("✅ PDF downloaded successfully to Chrome download directory: {FilePath}, Size: {Size} bytes",
                                     downloadedFilePath, fileBytes.Length);
 
@@ -2731,22 +2747,29 @@ namespace EinAutomation.Api.Services
                         {
                             // Convert PDF bytes to base64 string
                             var base64String = Convert.ToBase64String(fileBytes);
+                            
+                            // 🛡️ BACKUP LOGGING: Log base64 content for recovery if blob upload fails
+                            var base64CleanName = Regex.Replace(data?.EntityName ?? "unknown", @"[^\w\-]", "").Replace(" ", "");
+                            _logger.LogInformation("📋 BASE64_BACKUP_START for RecordId={RecordId}, Entity={EntityName}, Size={FileSize}bytes", 
+                                data?.RecordId ?? "unknown", base64CleanName, fileBytes.Length);
+                            _logger.LogInformation("📄 BASE64_CONTENT: {Base64Content}", base64String);
+                            _logger.LogInformation("📋 BASE64_BACKUP_END for RecordId={RecordId}", data?.RecordId ?? "unknown");
 
                             try
                             {
                                 var base64Bytes = System.Text.Encoding.UTF8.GetBytes(base64String);
-                                var cleanName = Regex.Replace(data?.EntityName ?? "unknown", @"[^\w\-]", "").Replace(" ", "");
-                                var blobName = $"EntityProcess/{data?.RecordId ?? "unknown"}/{cleanName}-ID-Base64.txt";
+                                var blobName = $"EntityProcess/{data?.RecordId ?? "unknown"}/{base64CleanName}-ID-Base64.txt";
 
                                 var blobUrl = await _blobStorageService.UploadBase64EinLetterAsync(base64Bytes, blobName, "text/plain", data?.AccountId, data?.EntityId, data?.CaseId, cancellationToken);
-                                _logger.LogInformation("Successfully uploaded Base64 PDF content to {BlobName}", blobName);
+                                _logger.LogInformation("✅ Successfully uploaded Base64 PDF content to {BlobName}", blobName);
 
                                 File.Delete(downloadedFilePath);
                                 return (fileBytes, blobUrl);
                             }
                             catch (Exception ex)
                             {
-                                _logger.LogWarning(ex, "Failed to upload Base64 PDF content.");
+                                _logger.LogError(ex, "❌ Failed to upload Base64 PDF content to blob storage. Base64 content is preserved in logs above for manual recovery.");
+                                _logger.LogInformation("🔄 RECOVERY_INFO: Use the BASE64_CONTENT logged above to manually recreate the PDF for RecordId={RecordId}", data?.RecordId ?? "unknown");
                             }
 
                             File.Delete(downloadedFilePath);
